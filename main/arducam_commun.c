@@ -38,7 +38,7 @@ void i2c_writes(const struct sensor_reg reglist[])
     i2c_write(reg_addr, &reg_val, 1);
     next++;
 
-	vTaskDelay(1 / portTICK_RATE_MS);
+	vTaskDelay(2 / portTICK_RATE_MS);
   }
 }
 

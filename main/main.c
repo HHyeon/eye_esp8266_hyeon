@@ -44,6 +44,12 @@
 EventGroupHandle_t arducam_init_done_grpevt;
 
 
+#define PART_BOUNDARY "123456789000000000000987654321"
+static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
+static const char* _STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
+static const char* _STREAM_PART_FORMAT = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
+
+
 esp_err_t hello_type_get_handler(httpd_req_t *req)
 {
 	size_t qrylen = httpd_req_get_url_query_len(req);
@@ -58,10 +64,12 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 		CAM_CS_END;
 		i2c_driver_delete(I2C_NUM_0);
 		spi_deinit(HSPI_HOST);	
+		xEventGroupSetBits(arducam_init_done_grpevt, BIT(0)); // set for arducam re init 
+		xEventGroupClearBits(arducam_init_done_grpevt, BIT(1)); // clear for wait init done
+	    xEventGroupWaitBits(arducam_init_done_grpevt, BIT(1), true, false, portMAX_DELAY);
 		const char *STR = "cam reset";
 		httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
 		httpd_resp_send(req, STR, strlen(STR));
-		xEventGroupSetBits(arducam_init_done_grpevt, BIT(0));
 	}
 	else if(strcmp(buf, "img") == 0)
 	{
@@ -92,19 +100,21 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 			buffered_fifosize |= spi_read_reg(FIFO_SIZE2);
 			buffered_fifosize <<= 8;
 			buffered_fifosize |= spi_read_reg(FIFO_SIZE1);
-			
-			ESP_LOGI(TAG, "captured size : %d bytes", buffered_fifosize);
 
-			if(buffered_fifosize > (512*1024))
+			if(buffered_fifosize > MAX_FIFO_SIZE)
 			{
-				const char *STR = "cam reset";
+				ESP_LOGI(TAG, "ERROR - captured size : %d bytes reached max MAX_FIFO_SIZE", buffered_fifosize);
+				
+				const char *STR = "img error";
 				httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
 				httpd_resp_send(req, STR, strlen(STR));
 			}
 			else
 			{
+				ESP_LOGI(TAG, "captured size : %d bytes", buffered_fifosize);
+				
 				httpd_resp_set_type(req, HTTPD_TYPE_IMAGE_JPEG);
-				httpd_resp_send_hdr_only(req, buffered_fifosize);
+				//httpd_resp_send_hdr_only(req, buffered_fifosize); // this is deprecate by using httpd_resp_send_chunk
 
 				const int buflen = 128;
 				char *txbuf = malloc(buflen);
@@ -122,7 +132,7 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 					
 					if(bufindex >= 128)
 					{
-						if(httpd_send(req, txbuf, bufindex) < 0)
+						if(httpd_resp_send_chunk(req, txbuf, bufindex) != ESP_OK)
 						{
 							ESP_LOGE(TAG, "Client Closed Connection");
 							break;
@@ -136,11 +146,14 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 					}
 					
 					bytepast = bytenow;
+
+					vTaskDelay(1 / portTICK_RATE_MS);
+					
 				}
 
 				if(bufindex > 0)
 				{
-					if(httpd_send(req, txbuf, bufindex) < 0)
+					if(httpd_resp_send_chunk(req, txbuf, bufindex) != ESP_OK)
 					{
 						ESP_LOGE(TAG, "Client Closed Connection");
 					}
@@ -152,6 +165,122 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 				free(txbuf);
 			}
 		}
+	}
+	else if(strcmp(buf, "stream") == 0)
+	{
+		httpd_resp_set_type(req, _STREAM_CONTENT_TYPE);
+	
+		uint8_t stream_terminated = 0;
+		const int buflen = 128;
+		char *txbuf = malloc(buflen);
+		char *_stream_part = malloc(64);
+		while(stream_terminated == 0)
+		{
+			spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK);
+			spi_write_reg(ARDUCHIP_FIFO, FIFO_START_MASK);
+			
+			ESP_LOGI(TAG, "wait for capture");
+			uint32_t timeout = 0;
+			while( !(spi_read_reg(ARDUCHIP_TRIG) & CAP_DONE_MASK)) {
+				vTaskDelay(50 / portTICK_RATE_MS);
+				timeout++;
+				if(timeout >= 100) break;
+			}
+
+			
+			if(timeout == 100)
+			{
+				ESP_LOGE(TAG, "wait for capture timeout");
+				stream_terminated = 1;
+			}
+			else
+			{
+				ESP_LOGI(TAG, "capture done");
+				
+				uint32_t buffered_fifosize=0;
+				
+				buffered_fifosize |= spi_read_reg(FIFO_SIZE3);
+				buffered_fifosize <<= 8;
+				buffered_fifosize |= spi_read_reg(FIFO_SIZE2);
+				buffered_fifosize <<= 8;
+				buffered_fifosize |= spi_read_reg(FIFO_SIZE1);
+
+				sprintf(_stream_part, _STREAM_PART_FORMAT, buffered_fifosize);
+				
+				if(httpd_resp_send_chunk(req, _stream_part, strlen(_stream_part)) != ESP_OK)
+				{
+					ESP_LOGE(TAG, "Client Closed Connection");
+					stream_terminated = 1;				}
+				else 
+				if(buffered_fifosize < MAX_FIFO_SIZE)
+				{
+					ESP_LOGI(TAG, "captured size : %d bytes", buffered_fifosize);
+					
+				
+					CAM_CS_BEGIN;
+					spi_transfer(BURST_FIFO_READ);
+					uint8_t bytenow=0,bytepast=0;
+					uint32_t bufindex = 0, sendsize=0;
+					while(buffered_fifosize--)
+					{
+						bytenow = spi_transfer(0x00);
+						txbuf[bufindex] = bytenow;
+						bufindex++;
+						sendsize++;
+						
+						if(bufindex >= 128)
+						{
+							if(httpd_resp_send_chunk(req, txbuf, bufindex) != ESP_OK)
+							{
+								ESP_LOGE(TAG, "Client Closed Connection");
+								stream_terminated = 1;
+								break;
+							}
+							bufindex=0;
+						}
+						
+						if(bytenow == 0xD9 && bytepast == 0xFF)
+						{
+							ESP_LOGI(TAG, "FFD9 found at %d", sendsize);
+						}
+						
+						bytepast = bytenow;
+					
+						vTaskDelay(1 / portTICK_RATE_MS);
+						
+					}
+					
+					if(bufindex > 0)
+					{
+						if(httpd_resp_send_chunk(req, txbuf, bufindex) != ESP_OK)
+						{
+							ESP_LOGE(TAG, "Client Closed Connection");
+							stream_terminated = 1;
+						}
+					}
+					
+					CAM_CS_END;
+					spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK);
+					ESP_LOGI(TAG, "%d bytes sent", sendsize);
+
+					if(httpd_resp_send_chunk(req, _STREAM_BOUNDARY, strlen(_STREAM_BOUNDARY)) != ESP_OK)
+					{
+						ESP_LOGE(TAG, "Client Closed Connection");
+						stream_terminated = 1;
+					}
+					
+				}
+				else
+				{
+					ESP_LOGI(TAG, "MAX_FIFO_SIZE reached");
+					stream_terminated = 1;
+				}
+			}
+		}
+	
+
+		free(txbuf);
+
 	}
 	else
 	{
@@ -174,7 +303,6 @@ httpd_uri_t basic_handlers = {
 	.handler = hello_type_get_handler,
 	.user_ctx = NULL
 };
-
 
 void register_basic_handlers(httpd_handle_t hd)
 {
@@ -295,9 +423,10 @@ void app_main()
 	
 	while(1)
 	{
-	    xEventGroupWaitBits(arducam_init_done_grpevt, BIT(0), true, true, portMAX_DELAY);
+	    xEventGroupWaitBits(arducam_init_done_grpevt, BIT(0), true, false, portMAX_DELAY);
 		arducam_camera_init();
 		ESP_LOGI(TAG, "ARDUCAM INIT SUCCESS");
+		xEventGroupSetBits(arducam_init_done_grpevt, BIT(1));
 	}
 	
 }
