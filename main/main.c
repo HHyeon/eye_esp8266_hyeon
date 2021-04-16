@@ -55,78 +55,103 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 
 	if(strcmp(buf, "caminit") == 0)
 	{
-		xEventGroupSetBits(arducam_init_done_grpevt, BIT(0));
+		CAM_CS_END;
+		i2c_driver_delete(I2C_NUM_0);
+		spi_deinit(HSPI_HOST);	
 		const char *STR = "cam reset";
 		httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
 		httpd_resp_send(req, STR, strlen(STR));
+		xEventGroupSetBits(arducam_init_done_grpevt, BIT(0));
 	}
 	else if(strcmp(buf, "img") == 0)
 	{
-		
 		spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK);
 		spi_write_reg(ARDUCHIP_FIFO, FIFO_START_MASK);
-		
-		while( !(spi_read_reg(ARDUCHIP_TRIG) & CAP_DONE_MASK))
+
+		ESP_LOGI(TAG, "wait for capture");
+		uint32_t timeout = 0;
+		while( !(spi_read_reg(ARDUCHIP_TRIG) & CAP_DONE_MASK)) {
 			vTaskDelay(50 / portTICK_RATE_MS);
-		
-		uint32_t buffered_fifosize=0;
-		
-		buffered_fifosize |= spi_read_reg(FIFO_SIZE3);
-		buffered_fifosize <<= 8;
-		                            buffered_fifosize |= spi_read_reg(FIFO_SIZE2);
-		buffered_fifosize <<= 8;
-		buffered_fifosize |= spi_read_reg(FIFO_SIZE1);
-		
-		ESP_LOGI(TAG, "captured size : %d bytes", buffered_fifosize);
-		
-		httpd_resp_set_type(req, HTTPD_TYPE_IMAGE_JPEG);
-		httpd_resp_send_hdr_only(req, buffered_fifosize);
-
-		const int buflen = 128;
-		char *txbuf = malloc(buflen);
-		
-		CAM_CS_BEGIN;
-		spi_transfer(BURST_FIFO_READ);
-		uint8_t bytenow=0,bytepast=0;
-		uint32_t bufindex = 0, sendsize=0;
-		while(buffered_fifosize--)
+			timeout++;
+			if(timeout >= 100) break;
+		}
+		if(timeout == 100)
 		{
-			bytenow = spi_transfer(0x00);
-			txbuf[bufindex] = bytenow;
-			bufindex++;
-			sendsize++;
+			const char *STR = "cam error";
+			httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
+			httpd_resp_send(req, STR, strlen(STR));
+		}
+		else
+		{
+			ESP_LOGI(TAG, "capture done");
 			
-			if(bufindex >= 128)
+			uint32_t buffered_fifosize=0;
+			
+			buffered_fifosize |= spi_read_reg(FIFO_SIZE3);
+			buffered_fifosize <<= 8;
+			buffered_fifosize |= spi_read_reg(FIFO_SIZE2);
+			buffered_fifosize <<= 8;
+			buffered_fifosize |= spi_read_reg(FIFO_SIZE1);
+			
+			ESP_LOGI(TAG, "captured size : %d bytes", buffered_fifosize);
+
+			if(buffered_fifosize > (512*1024))
 			{
-				if(httpd_send(req, txbuf, bufindex) < 0)
+				const char *STR = "cam reset";
+				httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
+				httpd_resp_send(req, STR, strlen(STR));
+			}
+			else
+			{
+				httpd_resp_set_type(req, HTTPD_TYPE_IMAGE_JPEG);
+				httpd_resp_send_hdr_only(req, buffered_fifosize);
+
+				const int buflen = 128;
+				char *txbuf = malloc(buflen);
+				
+				CAM_CS_BEGIN;
+				spi_transfer(BURST_FIFO_READ);
+				uint8_t bytenow=0,bytepast=0;
+				uint32_t bufindex = 0, sendsize=0;
+				while(buffered_fifosize--)
 				{
-					ESP_LOGE(TAG, "Client Closed Connection");
-					break;
+					bytenow = spi_transfer(0x00);
+					txbuf[bufindex] = bytenow;
+					bufindex++;
+					sendsize++;
+					
+					if(bufindex >= 128)
+					{
+						if(httpd_send(req, txbuf, bufindex) < 0)
+						{
+							ESP_LOGE(TAG, "Client Closed Connection");
+							break;
+						}
+						bufindex=0;
+					}
+					
+					if(bytenow == 0xD9 && bytepast == 0xFF)
+					{
+						ESP_LOGI(TAG, "FFD9 found at %d", sendsize);
+					}
+					
+					bytepast = bytenow;
 				}
-				bufindex=0;
-			}
-			
-			if(bytenow == 0xD9 && bytepast == 0xFF)
-			{
-				ESP_LOGI(TAG, "FFD9 found at %d", sendsize);
-			}
-			
-			bytepast = bytenow;
-		}
 
-		if(bufindex > 0)
-		{
-			if(httpd_send(req, txbuf, bufindex) < 0)
-			{
-				ESP_LOGE(TAG, "Client Closed Connection");
+				if(bufindex > 0)
+				{
+					if(httpd_send(req, txbuf, bufindex) < 0)
+					{
+						ESP_LOGE(TAG, "Client Closed Connection");
+					}
+				}
+				CAM_CS_END;
+				spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK);
+
+				ESP_LOGI(TAG, "%d bytes sent", sendsize);
+				free(txbuf);
 			}
 		}
-		CAM_CS_END;
-		spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK);
-
-		ESP_LOGI(TAG, "send %d bytes", sendsize);
-		free(txbuf);
-		
 	}
 	else
 	{
@@ -220,7 +245,7 @@ void wifi_event_disconnected(httpd_handle_t* server)
 static inline void arducam_camera_init(void)
 {
 	gpio_set_direction(ARDUCAM_CS_PIN, GPIO_MODE_OUTPUT);
-	gpio_set_level(ARDUCAM_CS_PIN, 1);
+	CAM_CS_END;
 	
     i2c_config_t conf;
     conf.mode = I2C_MODE_MASTER;

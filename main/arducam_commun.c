@@ -37,6 +37,8 @@ void i2c_writes(const struct sensor_reg reglist[])
     reg_val = next->val;
     i2c_write(reg_addr, &reg_val, 1);
     next++;
+
+	vTaskDelay(1 / portTICK_RATE_MS);
   }
 }
 
@@ -65,12 +67,14 @@ esp_err_t ardu_cam_init()
 		//vTaskDelay(1000 / portTICK_RATE_MS);
 		return 1;
 	}
-	
+
+	/*
 	vTaskDelay(100 / portTICK_RATE_MS);
 	spi_write_reg(0x07,0x80);
 	vTaskDelay(100 / portTICK_RATE_MS);
 	spi_write_reg(0x07,0x00);
 	vTaskDelay(100 / portTICK_RATE_MS);
+	*/
 	
 	uint8_t sensoridH=0, sensoridL=0, txreg;
 	txreg = 0x01;		
