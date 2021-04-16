@@ -100,18 +100,17 @@ esp_err_t ardu_cam_init()
 	data = 0x80;
 	i2c_write(0x12, &data, 1);
 	vTaskDelay(100 / portTICK_RATE_MS);
-	// printf("OV2640_JPEG_INIT\n");
 	i2c_writes(OV2640_JPEG_INIT);
-	// printf("OV2640_YUV422\n");
 	i2c_writes(OV2640_YUV422);
-	// printf("OV2640_JPEG\n");
 	i2c_writes(OV2640_JPEG);
 	data = 0x01;
 	i2c_write(0xff, &data, 1);
 	data = 0x00;
 	i2c_write(0x15, &data, 1);
-	// printf("OV2640_1600x1200_JPEG\n");
-	i2c_writes(OV2640_1600x1200_JPEG);
+
+	
+	//i2c_writes(OV2640_800x600_JPEG);	
+	i2c_writes(OV2640_1600x1200_JPEG);	
 	
 	return ESP_OK;
 }

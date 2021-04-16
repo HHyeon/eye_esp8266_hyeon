@@ -291,7 +291,7 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 		httpd_resp_send(req, STR, strlen(STR));
 	}
 
-	
+	ESP_LOGI(TAG, "client session terminated");
 	
     free (buf);
 	return ESP_OK;
@@ -390,6 +390,7 @@ static inline void arducam_camera_init(void)
 	
 	spi_config_t spi_config;
     spi_config.interface.val = SPI_DEFAULT_INTERFACE;
+	spi_config.interface.cs_en=0;
 	spi_config.mode = SPI_MASTER_MODE;
 	spi_config.clk_div = SPI_8MHz_DIV;
 	spi_init(HSPI_HOST, &spi_config);
