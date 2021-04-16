@@ -114,7 +114,7 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 				ESP_LOGI(TAG, "captured size : %d bytes", buffered_fifosize);
 				
 				httpd_resp_set_type(req, HTTPD_TYPE_IMAGE_JPEG);
-				//httpd_resp_send_hdr_only(req, buffered_fifosize); // this is deprecate by using httpd_resp_send_chunk
+				httpd_resp_send_hdr_only(req, buffered_fifosize); // this is deprecate by using httpd_resp_send_chunk
 
 				const int buflen = 128;
 				char *txbuf = malloc(buflen);
@@ -132,7 +132,8 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 					
 					if(bufindex >= 128)
 					{
-						if(httpd_resp_send_chunk(req, txbuf, bufindex) != ESP_OK)
+						//if(httpd_resp_send_chunk(req, txbuf, bufindex) != ESP_OK)
+						if(httpd_send(req, txbuf, bufindex) < 0)
 						{
 							ESP_LOGE(TAG, "Client Closed Connection");
 							break;
@@ -153,7 +154,8 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 
 				if(bufindex > 0)
 				{
-					if(httpd_resp_send_chunk(req, txbuf, bufindex) != ESP_OK)
+					//if(httpd_resp_send_chunk(req, txbuf, bufindex) != ESP_OK)
+					if(httpd_send(req, txbuf, bufindex) < 0)
 					{
 						ESP_LOGE(TAG, "Client Closed Connection");
 					}
