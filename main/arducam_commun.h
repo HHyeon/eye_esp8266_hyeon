@@ -16,11 +16,12 @@
 #include "driver/gpio.h"
 #include "esp8266_peri.h"
 
-
 #define ARDUCAM_CS_PIN 	GPIO_NUM_16
 #define CAM_CS_BEGIN 	gpio_set_level(ARDUCAM_CS_PIN, 0)
 #define CAM_CS_END 		gpio_set_level(ARDUCAM_CS_PIN, 1)
 
+#define OV2640_CHIPID_HIGH 	0x0A
+#define OV2640_CHIPID_LOW 	0x0B
 
 #define ARDUCHIP_FIFO      		0x04  //FIFO and I2C control
 #define FIFO_CLEAR_MASK    		0x01
@@ -50,5 +51,7 @@ void setBitOrder(uint8_t bitOrder);
 uint8_t spi_transfer(uint8_t data);
 
 esp_err_t ardu_cam_init();
+void arducam_jpeg_change_resolution(uint8_t arg);
+
 
 #endif

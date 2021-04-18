@@ -36,8 +36,9 @@
 #include <esp_http_server.h>
 #include <http_parser.h>
 
-
 #include "arducam_commun.h"
+
+//#include "ov2640_regs.h"
 
 #define TAG "main"
 
@@ -50,28 +51,50 @@ static const char* _STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
 static const char* _STREAM_PART_FORMAT = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
 
 
+static inline void cam_re_init_polling()
+{
+	CAM_CS_END;
+	i2c_driver_delete(I2C_NUM_0);
+	spi_deinit(HSPI_HOST);	
+	xEventGroupSetBits(arducam_init_done_grpevt, BIT(0)); // set for arducam re init 
+	xEventGroupClearBits(arducam_init_done_grpevt, BIT(1)); // clear for wait init 
+    xEventGroupWaitBits(arducam_init_done_grpevt, BIT(1), true, false, portMAX_DELAY); // wait for init done
+}
+
+uint8_t cam_spi_check()
+{
+	uint8_t testdata[4] = {0xAA,0xBB,0xCC,0xDD};
+	
+	for(int i=0;i<4;i++)
+	{
+		spi_write_reg(0x00, testdata[i]);
+		if(spi_read_reg(0x00) != testdata[i])
+		{
+			ESP_LOGE(TAG, "cam spi check failed");
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
 esp_err_t hello_type_get_handler(httpd_req_t *req)
 {
 	size_t qrylen = httpd_req_get_url_query_len(req);
-	char *buf = malloc(qrylen+1);
-	httpd_req_get_url_query_str(req, buf, qrylen+1);
-	buf[qrylen] = 0;
+	char *bufurl = malloc(qrylen+1);
+	httpd_req_get_url_query_str(req, bufurl, qrylen+1);
+	bufurl[qrylen] = 0;
 
-	ESP_LOGI(TAG, "url_query_str - %s", buf);
+	ESP_LOGI(TAG, "url_query_str - %s", bufurl);
 
-	if(strcmp(buf, "caminit") == 0)
+	if(strcmp(bufurl, "caminit") == 0)
 	{
-		CAM_CS_END;
-		i2c_driver_delete(I2C_NUM_0);
-		spi_deinit(HSPI_HOST);	
-		xEventGroupSetBits(arducam_init_done_grpevt, BIT(0)); // set for arducam re init 
-		xEventGroupClearBits(arducam_init_done_grpevt, BIT(1)); // clear for wait init done
-	    xEventGroupWaitBits(arducam_init_done_grpevt, BIT(1), true, false, portMAX_DELAY);
+		cam_re_init_polling();
 		const char *STR = "cam reset";
 		httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
 		httpd_resp_send(req, STR, strlen(STR));
 	}
-	else if(strcmp(buf, "img") == 0)
+	else if(strcmp(bufurl, "img") == 0)
 	{
 		spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK);
 		spi_write_reg(ARDUCHIP_FIFO, FIFO_START_MASK);
@@ -81,9 +104,9 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 		while( !(spi_read_reg(ARDUCHIP_TRIG) & CAP_DONE_MASK)) {
 			vTaskDelay(50 / portTICK_RATE_MS);
 			timeout++;
-			if(timeout >= 100) break;
+			if(timeout >= 40) break;
 		}
-		if(timeout == 100)
+		if(timeout == 40)
 		{
 			const char *STR = "cam error";
 			httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
@@ -93,17 +116,17 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 		{
 			ESP_LOGI(TAG, "capture done");
 			
-			uint32_t buffered_fifosize=0;
+			uint32_t bufurlfered_fifosize=0;
 			
-			buffered_fifosize |= spi_read_reg(FIFO_SIZE3);
-			buffered_fifosize <<= 8;
-			buffered_fifosize |= spi_read_reg(FIFO_SIZE2);
-			buffered_fifosize <<= 8;
-			buffered_fifosize |= spi_read_reg(FIFO_SIZE1);
+			bufurlfered_fifosize |= spi_read_reg(FIFO_SIZE3);
+			bufurlfered_fifosize <<= 8;
+			bufurlfered_fifosize |= spi_read_reg(FIFO_SIZE2);
+			bufurlfered_fifosize <<= 8;
+			bufurlfered_fifosize |= spi_read_reg(FIFO_SIZE1);
 
-			if(buffered_fifosize > MAX_FIFO_SIZE)
+			if(bufurlfered_fifosize > MAX_FIFO_SIZE)
 			{
-				ESP_LOGI(TAG, "ERROR - captured size : %d bytes reached max MAX_FIFO_SIZE", buffered_fifosize);
+				ESP_LOGI(TAG, "ERROR - captured size : %d bytes reached max MAX_FIFO_SIZE", bufurlfered_fifosize);
 				
 				const char *STR = "img error";
 				httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
@@ -111,34 +134,34 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 			}
 			else
 			{
-				ESP_LOGI(TAG, "captured size : %d bytes", buffered_fifosize);
+				ESP_LOGI(TAG, "captured size : %d bytes", bufurlfered_fifosize);
 				
 				httpd_resp_set_type(req, HTTPD_TYPE_IMAGE_JPEG);
-				httpd_resp_send_hdr_only(req, buffered_fifosize); // this is deprecate by using httpd_resp_send_chunk
+				httpd_resp_send_hdr_only(req, bufurlfered_fifosize); // this is deprecate by using httpd_resp_send_chunk
 
-				const int buflen = 128;
-				char *txbuf = malloc(buflen);
+				const int bufurllen = 128;
+				char *txbufurl = malloc(bufurllen);
 				
 				CAM_CS_BEGIN;
 				spi_transfer(BURST_FIFO_READ);
 				uint8_t bytenow=0,bytepast=0;
-				uint32_t bufindex = 0, sendsize=0;
-				while(buffered_fifosize--)
+				uint32_t bufurlindex = 0, sendsize=0;
+				while(bufurlfered_fifosize--)
 				{
 					bytenow = spi_transfer(0x00);
-					txbuf[bufindex] = bytenow;
-					bufindex++;
+					txbufurl[bufurlindex] = bytenow;
+					bufurlindex++;
 					sendsize++;
 					
-					if(bufindex >= 128)
+					if(bufurlindex >= 128)
 					{
-						//if(httpd_resp_send_chunk(req, txbuf, bufindex) != ESP_OK)
-						if(httpd_send(req, txbuf, bufindex) < 0)
+						//if(httpd_resp_send_chunk(req, txbufurl, bufurlindex) != ESP_OK)
+						if(httpd_send(req, txbufurl, bufurlindex) < 0)
 						{
 							ESP_LOGE(TAG, "Client Closed Connection");
 							break;
 						}
-						bufindex=0;
+						bufurlindex=0;
 					}
 					
 					if(bytenow == 0xD9 && bytepast == 0xFF)
@@ -148,14 +171,14 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 					
 					bytepast = bytenow;
 
-					vTaskDelay(1 / portTICK_RATE_MS);
+					//vTaskDelay(1 / portTICK_RATE_MS);
 					
 				}
 
-				if(bufindex > 0)
+				if(bufurlindex > 0)
 				{
-					//if(httpd_resp_send_chunk(req, txbuf, bufindex) != ESP_OK)
-					if(httpd_send(req, txbuf, bufindex) < 0)
+					//if(httpd_resp_send_chunk(req, txbufurl, bufurlindex) != ESP_OK)
+					if(httpd_send(req, txbufurl, bufurlindex) < 0)
 					{
 						ESP_LOGE(TAG, "Client Closed Connection");
 					}
@@ -164,17 +187,17 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 				spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK);
 
 				ESP_LOGI(TAG, "%d bytes sent", sendsize);
-				free(txbuf);
+				free(txbufurl);
 			}
 		}
 	}
-	else if(strcmp(buf, "stream") == 0)
+	else if(strcmp(bufurl, "stream") == 0)
 	{
 		httpd_resp_set_type(req, _STREAM_CONTENT_TYPE);
 	
 		uint8_t stream_terminated = 0;
-		const int buflen = 128;
-		char *txbuf = malloc(buflen);
+		const int bufurllen = 128;
+		char *txbufurl = malloc(bufurllen);
 		char *_stream_part = malloc(64);
 		while(stream_terminated == 0)
 		{
@@ -186,11 +209,11 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 			while( !(spi_read_reg(ARDUCHIP_TRIG) & CAP_DONE_MASK)) {
 				vTaskDelay(50 / portTICK_RATE_MS);
 				timeout++;
-				if(timeout >= 100) break;
+				if(timeout >= 40) break;
 			}
 
 			
-			if(timeout == 100)
+			if(timeout == 40)
 			{
 				ESP_LOGE(TAG, "wait for capture timeout");
 				stream_terminated = 1;
@@ -199,46 +222,46 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 			{
 				ESP_LOGI(TAG, "capture done");
 				
-				uint32_t buffered_fifosize=0;
+				uint32_t bufurlfered_fifosize=0;
 				
-				buffered_fifosize |= spi_read_reg(FIFO_SIZE3);
-				buffered_fifosize <<= 8;
-				buffered_fifosize |= spi_read_reg(FIFO_SIZE2);
-				buffered_fifosize <<= 8;
-				buffered_fifosize |= spi_read_reg(FIFO_SIZE1);
+				bufurlfered_fifosize |= spi_read_reg(FIFO_SIZE3);
+				bufurlfered_fifosize <<= 8;
+				bufurlfered_fifosize |= spi_read_reg(FIFO_SIZE2);
+				bufurlfered_fifosize <<= 8;
+				bufurlfered_fifosize |= spi_read_reg(FIFO_SIZE1);
 
-				sprintf(_stream_part, _STREAM_PART_FORMAT, buffered_fifosize);
+				sprintf(_stream_part, _STREAM_PART_FORMAT, bufurlfered_fifosize);
 				
 				if(httpd_resp_send_chunk(req, _stream_part, strlen(_stream_part)) != ESP_OK)
 				{
 					ESP_LOGE(TAG, "Client Closed Connection");
 					stream_terminated = 1;				}
 				else 
-				if(buffered_fifosize < MAX_FIFO_SIZE)
+				if(bufurlfered_fifosize < MAX_FIFO_SIZE)
 				{
-					ESP_LOGI(TAG, "captured size : %d bytes", buffered_fifosize);
+					ESP_LOGI(TAG, "captured size : %d bytes", bufurlfered_fifosize);
 					
 				
 					CAM_CS_BEGIN;
 					spi_transfer(BURST_FIFO_READ);
 					uint8_t bytenow=0,bytepast=0;
-					uint32_t bufindex = 0, sendsize=0;
-					while(buffered_fifosize--)
+					uint32_t bufurlindex = 0, sendsize=0;
+					while(bufurlfered_fifosize--)
 					{
 						bytenow = spi_transfer(0x00);
-						txbuf[bufindex] = bytenow;
-						bufindex++;
+						txbufurl[bufurlindex] = bytenow;
+						bufurlindex++;
 						sendsize++;
 						
-						if(bufindex >= 128)
+						if(bufurlindex >= 128)
 						{
-							if(httpd_resp_send_chunk(req, txbuf, bufindex) != ESP_OK)
+							if(httpd_resp_send_chunk(req, txbufurl, bufurlindex) != ESP_OK)
 							{
 								ESP_LOGE(TAG, "Client Closed Connection");
 								stream_terminated = 1;
 								break;
 							}
-							bufindex=0;
+							bufurlindex=0;
 						}
 						
 						if(bytenow == 0xD9 && bytepast == 0xFF)
@@ -248,13 +271,13 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 						
 						bytepast = bytenow;
 					
-						vTaskDelay(1 / portTICK_RATE_MS);
+						//vTaskDelay(1 / portTICK_RATE_MS);
 						
 					}
 					
-					if(bufindex > 0)
+					if(bufurlindex > 0)
 					{
-						if(httpd_resp_send_chunk(req, txbuf, bufindex) != ESP_OK)
+						if(httpd_resp_send_chunk(req, txbufurl, bufurlindex) != ESP_OK)
 						{
 							ESP_LOGE(TAG, "Client Closed Connection");
 							stream_terminated = 1;
@@ -280,8 +303,35 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 			}
 		}
 	
+		free(txbufurl);
 
-		free(txbuf);
+	}
+	else if(strncmp(bufurl, "resolution", 10) == 0)
+	{
+		char STR[32];
+
+		if(strlen(bufurl) == 11)
+		{
+			uint8_t arg = bufurl[10]-'0';
+			ESP_LOGI(TAG, "arg:%d", arg);
+			if(arg<7)
+			{
+				arducam_jpeg_change_resolution(arg);
+				vTaskDelay(1000 / portTICK_RATE_MS);
+				sprintf(STR, "resized:%d", arg);
+			}
+			else
+			{
+				sprintf(STR, "resize arg error");
+			}
+		}
+		else
+		{
+			sprintf(STR, "resize arg error");
+		}
+		
+		httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
+		httpd_resp_send(req, STR, strlen(STR));
 
 	}
 	else
@@ -293,7 +343,7 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 
 	ESP_LOGI(TAG, "client session terminated");
 	
-    free (buf);
+    free (bufurl);
 	return ESP_OK;
 }
 
@@ -310,6 +360,7 @@ void register_basic_handlers(httpd_handle_t hd)
 {
     ESP_LOGI(TAG, "Registering basic handlers");
     if (httpd_register_uri_handler(hd, &basic_handlers) != ESP_OK) {
+
         ESP_LOGW(TAG, "register uri failed");
         return;
     }

@@ -1,14 +1,12 @@
 #ifndef OV2640_REGS_H
 #define OV2640_REGS_H
 
-#define OV2640_CHIPID_HIGH 	0x0A
-#define OV2640_CHIPID_LOW 	0x0B
-
-
 struct sensor_reg {
 	uint8_t reg;
 	uint8_t val;
 };
+
+
 
 const struct sensor_reg OV2640_QVGA[] =
 {
@@ -863,7 +861,6 @@ const struct sensor_reg OV2640_1600x1200_JPEG[] =
   	{0xff, 0xff}, 
   	
 };  
-#endif
 
 
 
@@ -1090,4 +1087,6 @@ const struct sensor_reg OV2640_640x480_JPEG2[] =
 	{0x5c,0x00},		//038
 	{0xd3,0x04},		//039
 	{0xe0,0x00},		//040
-};
+};
+
+#endif

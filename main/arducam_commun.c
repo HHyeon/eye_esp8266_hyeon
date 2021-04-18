@@ -1,14 +1,12 @@
 
 #include "esp_log.h"
 
-
 #include "arducam_commun.h"
-
-#include "ov2640_regs.h"
 
 #define I2C_DEV_ADDR 0x30
 
 #define TAG "arducam_commun"
+#include "ov2640_regs.h"
 
 esp_err_t i2c_write(uint8_t reg, uint8_t *data, size_t len)
 {
@@ -110,11 +108,27 @@ esp_err_t ardu_cam_init()
 
 	
 	//i2c_writes(OV2640_800x600_JPEG);	
-	i2c_writes(OV2640_1600x1200_JPEG);	
+	i2c_writes(OV2640_1600x1200_JPEG);
 	
 	return ESP_OK;
 }
 
+
+
+void arducam_jpeg_change_resolution(uint8_t arg)
+{
+	const struct sensor_reg *list[] = {
+		OV2640_1600x1200_JPEG,
+		OV2640_1280x1024_JPEG,
+		OV2640_1024x768_JPEG,
+		OV2640_800x600_JPEG,
+		OV2640_640x480_JPEG,
+		OV2640_352x288_JPEG,
+		OV2640_320x240_JPEG
+	};
+	
+	i2c_writes(list[arg]);
+}
 
 
 esp_err_t i2c_read(uint8_t reg, uint8_t *data, size_t len)
