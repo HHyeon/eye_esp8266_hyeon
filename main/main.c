@@ -306,13 +306,13 @@ esp_err_t hello_type_get_handler(httpd_req_t *req)
 		free(txbufurl);
 
 	}
-	else if(strncmp(bufurl, "resolution", 10) == 0)
+	else if(strncmp(bufurl, "res", 3) == 0)
 	{
 		char STR[32];
 
-		if(strlen(bufurl) == 11)
+		if(strlen(bufurl) == 4)
 		{
-			uint8_t arg = bufurl[10]-'0';
+			uint8_t arg = bufurl[3]-'0';
 			ESP_LOGI(TAG, "arg:%d", arg);
 			if(arg<7)
 			{
