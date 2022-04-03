@@ -38,8 +38,6 @@
 
 #include "arducam_commun.h"
 
-//#include "ov2640_regs.h"
-
 #define TAG "main"
 
 EventGroupHandle_t arducam_init_done_grpevt;
@@ -466,6 +464,8 @@ static inline void arducam_camera_init(void)
 
 void app_main()
 {
+	ESP_LOGI(TAG, "ESP8266 Started");
+	
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());

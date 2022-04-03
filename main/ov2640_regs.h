@@ -1087,6 +1087,7 @@ const struct sensor_reg OV2640_640x480_JPEG2[] =
 	{0x5c,0x00},		//038
 	{0xd3,0x04},		//039
 	{0xe0,0x00},		//040
-};
+};
+
 
 #endif
